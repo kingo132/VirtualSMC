@@ -29,6 +29,12 @@ bool SMCSMBusController::init(OSDictionary *properties) {
 	return true;
 }
 
+void SMCSMBusController::free() {
+	delete a51mObserver;
+	a51mObserver = nullptr;
+	IOSMBusController::free();
+}
+
 IOService *SMCSMBusController::probe(IOService *provider, SInt32 *score) {
 	if (!IOSMBusController::probe(provider, score)) {
 		SYSLOG("smcbus", "parent probe failure");
@@ -73,6 +79,11 @@ bool SMCSMBusController::start(IOService *provider) {
 	}
 
 	setProperty("IOSMBusSmartBatteryManager", kOSBooleanTrue);
+	setProperty("A51mBatteryRevision", "1.3.8-a51m1");
+	setProperty("A51mBatteryTimePolicyEnabled", BatteryManager::getShared()->a51mTimePolicyEnabled);
+	if (BatteryManager::getShared()->a51mObserveEnabled)
+		a51mObserver = new A51mObserver;
+	setProperty("A51mBatteryObserveActive", a51mObserver != nullptr);
 	setProperty("_SBS", 1, 32);
 	registerService();
 
@@ -127,6 +138,8 @@ IOSMBusStatus SMCSMBusController::startRequest(IOSMBusRequest *request) {
 	}
 	
 	IOSMBusTransaction *transaction = request->transaction;
+	A51mBattery::Snapshot replySource {};
+	bool haveReplySource = false;
 
 	if (transaction) {
 		DBGLOG("smcbus", "startRequest is called, address = 0x%x, command = 0x%x, protocol = 0x%x, status = 0x%x, sendDataCount = 0x%x, receiveDataCount = 0x%x",
@@ -196,6 +209,10 @@ IOSMBusStatus SMCSMBusController::startRequest(IOSMBusRequest *request) {
 				case kBCurrentCmd: {
 					IOSimpleLockLock(BatteryManager::getShared()->stateLock);
 					auto value = BatteryManager::getShared()->state.btInfo[0].state.signedPresentRate;
+					if (a51mObserver) {
+						replySource = BatteryManager::getShared()->state.btInfo[0].a51mSnapshot;
+						haveReplySource = true;
+					}
 					IOSimpleLockUnlock(BatteryManager::getShared()->stateLock);
 					setReceiveData(transaction, value);
 					break;
@@ -203,6 +220,10 @@ IOSMBusStatus SMCSMBusController::startRequest(IOSMBusRequest *request) {
 				case kBAverageCurrentCmd: {
 					IOSimpleLockLock(BatteryManager::getShared()->stateLock);
 					auto value = BatteryManager::getShared()->state.btInfo[0].state.signedAverageRate;
+					if (a51mObserver) {
+						replySource = BatteryManager::getShared()->state.btInfo[0].a51mSnapshot;
+						haveReplySource = true;
+					}
 					IOSimpleLockUnlock(BatteryManager::getShared()->stateLock);
 					setReceiveData(transaction, value);
 					break;
@@ -213,6 +234,10 @@ IOSMBusStatus SMCSMBusController::startRequest(IOSMBusRequest *request) {
 				case kBRunTimeToEmptyCmd: {
 					IOSimpleLockLock(BatteryManager::getShared()->stateLock);
 					auto value = BatteryManager::getShared()->state.btInfo[0].state.runTimeToEmpty;
+					if (a51mObserver) {
+						replySource = BatteryManager::getShared()->state.btInfo[0].a51mSnapshot;
+						haveReplySource = true;
+					}
 					IOSimpleLockUnlock(BatteryManager::getShared()->stateLock);
 					setReceiveData(transaction, value);
 					break;
@@ -220,6 +245,10 @@ IOSMBusStatus SMCSMBusController::startRequest(IOSMBusRequest *request) {
 				case kBAverageTimeToEmptyCmd: {
 					IOSimpleLockLock(BatteryManager::getShared()->stateLock);
 					auto value = BatteryManager::getShared()->state.btInfo[0].state.averageTimeToEmpty;
+					if (a51mObserver) {
+						replySource = BatteryManager::getShared()->state.btInfo[0].a51mSnapshot;
+						haveReplySource = true;
+					}
 					IOSimpleLockUnlock(BatteryManager::getShared()->stateLock);
 					setReceiveData(transaction, value);
 					break;
@@ -255,6 +284,10 @@ IOSMBusStatus SMCSMBusController::startRequest(IOSMBusRequest *request) {
 				case kBAverageTimeToFullCmd: {
 					IOSimpleLockLock(BatteryManager::getShared()->stateLock);
 					auto value = BatteryManager::getShared()->state.btInfo[0].state.timeToFull;
+					if (a51mObserver) {
+						replySource = BatteryManager::getShared()->state.btInfo[0].a51mSnapshot;
+						haveReplySource = true;
+					}
 					IOSimpleLockUnlock(BatteryManager::getShared()->stateLock);
 					setReceiveData(transaction, value);
 					break;
@@ -367,6 +400,8 @@ IOSMBusStatus SMCSMBusController::startRequest(IOSMBusRequest *request) {
 		SYSLOG("smcbus", "startRequest failed to append a request");
 		return kIOSMBusStatusUnknownFailure;
 	}
+	if (haveReplySource)
+		observePrepared(request, replySource);
 
 	IOSimpleLockLock(BatteryManager::getShared()->stateLock);
 	BatteryManager::getShared()->lastAccess = getCurrentTimeNs();
@@ -388,8 +423,85 @@ void SMCSMBusController::handleBatteryCommandsEvent() {
 	while (requestQueue->getCount() != 0) {
 		auto request = OSDynamicCast(IOSMBusRequest, requestQueue->getObject(0));
 		requestQueue->removeObject(0);
-		if (request != nullptr)
+		if (request != nullptr) {
+			observeCompletion(request);
 			completeRequest(request);
+		}
+	}
+	publishObservation();
+}
+
+// All observer methods run on the existing controller workloop, never under stateLock.
+void SMCSMBusController::observePrepared(IOSMBusRequest *request, const A51mBattery::Snapshot &source) {
+	if (!a51mObserver || !request->transaction)
+		return;
+	A51mPending *slot = nullptr;
+	for (auto &pending : a51mObserver->pending) {
+		if (pending.request == request) {
+			++a51mObserver->trace.dropped;
+			a51mObserver->dirty = true;
+			return; // Do not misattribute an already outstanding pointer.
+		}
+		if (!pending.request && !slot)
+			slot = &pending;
+	}
+	if (!slot) {
+		++a51mObserver->trace.dropped;
+		a51mObserver->dirty = true;
+		return; // Bounded diagnostic; never interfere with the request queue.
+	}
+	auto transaction = request->transaction;
+	slot->request = request;
+	slot->command = transaction->command;
+	slot->value = uint16_t(transaction->receiveData[0]) | (uint16_t(transaction->receiveData[1]) << 8);
+	slot->source = source;
+	slot->requestSequence = a51mObserver->trace.total + 1;
+	A51mBattery::Record record {};
+	record.eventNs = getCurrentTimeNs();
+	record.phase = 1; // Prepared reply, not yet completed.
+	record.command = record.expectedCommand = slot->command;
+	record.value = record.expectedValue = slot->value;
+	record.receiveCount = transaction->receiveDataCount;
+	record.source = source;
+	record.requestSequence = slot->requestSequence;
+	a51mObserver->trace.append(record);
+	a51mObserver->dirty = true;
+}
+
+void SMCSMBusController::observeCompletion(IOSMBusRequest *request) {
+	if (!a51mObserver)
+		return;
+	for (auto &pending : a51mObserver->pending) {
+		if (pending.request != request)
+			continue;
+		if (request->transaction) {
+			auto transaction = request->transaction;
+			A51mBattery::Record record {};
+			record.eventNs = getCurrentTimeNs();
+			record.phase = 2; // Immediately before native completeRequest; no read after release.
+			record.command = transaction->command;
+			record.value = uint16_t(transaction->receiveData[0]) | (uint16_t(transaction->receiveData[1]) << 8);
+			record.receiveCount = transaction->receiveDataCount;
+			record.expectedCommand = pending.command;
+			record.expectedValue = pending.value;
+			record.source = pending.source;
+			record.requestSequence = pending.requestSequence;
+			a51mObserver->trace.append(record);
+			a51mObserver->dirty = true;
+		}
+		pending.request = nullptr;
+		return;
+	}
+}
+
+void SMCSMBusController::publishObservation() {
+	if (!a51mObserver || !a51mObserver->dirty)
+		return;
+	auto data = OSData::withBytes(&a51mObserver->trace, sizeof(a51mObserver->trace));
+	if (data) {
+		setProperty("A51mBatteryTrace", data);
+		data->release();
+		a51mObserver->dirty = false;
 	}
 }
 

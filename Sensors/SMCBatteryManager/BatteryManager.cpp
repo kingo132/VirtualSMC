@@ -127,7 +127,8 @@ bool BatteryManager::findBatteries() {
 				auto device = OSDynamicCast(IOACPIPlatformDevice, entry);
 				if (device) {
 					DBGLOG("bmgr", "found ACPI PNP battery %s", safeString(entry->getName()));
-					batteries[batteriesCount] = ACPIBattery(device, batteriesCount, stateLock, &state.btInfo[batteriesCount]);
+					batteries[batteriesCount] = ACPIBattery(device, batteriesCount, stateLock, &state.btInfo[batteriesCount],
+						a51mTimePolicyEnabled, a51mObserveEnabled);
 					batteryNotifiers[batteriesCount] = device->registerInterest(gIOGeneralInterest, acpiNotification, this);
 					if (!batteryNotifiers[batteriesCount]) {
 						SYSLOG("bmgr", "battery find is unable to register interest for battery notifications");
@@ -373,6 +374,8 @@ void BatteryManager::createShared() {
 	instance = new BatteryManager;
 	if (!instance)
 		PANIC("bmgr", "failed to allocate battery manager");
+	instance->a51mTimePolicyEnabled = checkKernelArgument("-a51mbattime");
+	instance->a51mObserveEnabled = checkKernelArgument("-a51mbatobserve");
 	instance->mainLock = IOLockAlloc();
 	if (!instance->mainLock)
 		PANIC("bmgr", "failed to allocate main battery manager lock");

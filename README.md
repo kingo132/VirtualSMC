@@ -5,6 +5,10 @@ VirtualSMC
 
 Advanced Apple SMC emulator in the kernel. Requires [Lilu](https://github.com/vit9696/Lilu) for full functioning.
 
+This fork's `a51m-battery-telemetry` branch adds optional A51mR2 battery time
+corrections and bounded read-only tracing. Both features are disabled by default.
+See [A51m battery changes, tests and deployment limits](Docs/A51mBattery.md).
+
 English (Current)  
 [简体中文](README_zh.md)  
 

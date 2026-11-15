@@ -84,8 +84,10 @@ public:
 	/**
 	 *  Actual constructor representing a real device with its own index and shared info struct
 	 */
-	ACPIBattery(IOACPIPlatformDevice *device, int32_t id, IOSimpleLock *lock, BatteryInfo *info) :
-		device(device), id(id), batteryInfoLock(lock), batteryInfo(info) {}
+	ACPIBattery(IOACPIPlatformDevice *device, int32_t id, IOSimpleLock *lock, BatteryInfo *info,
+		bool timePolicy=false, bool observe=false) :
+		batteryInfoLock(lock), batteryInfo(info), a51mTimePolicy(timePolicy),
+		a51mObserve(observe), id(id), device(device) {}
 
 	/**
 	 *  Refresh battery static information
@@ -125,6 +127,9 @@ public:
 	bool averageRateAvailable {false};
 
 private:
+	bool a51mTimePolicy {false}, a51mObserve {false};
+	uint64_t a51mObservationSequence {0};
+
 	uint32_t getNumberFromArray(OSArray *array, uint32_t index);
 
 	void getStringFromArray(OSArray *array, uint32_t index, char *dst, uint32_t dstSize);

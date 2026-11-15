@@ -1,0 +1,140 @@
+# A51mR2电池时间修复与只读观察
+
+基线：官方VirtualSMC 1.3.8，提交`b15991dd87e36a102bf159ea56490e3126245590`。
+范围：仅SMCBatteryManager电池插件；两项功能默认关闭，其他VirtualSMC插件不需要替换。
+
+## 已定位与未定位
+
+官方ACPIBattery.cpp在速率为零时，用`60 * remainingCapacity`作为放电时间兜底。
+SMCSMBusController::setReceiveData随后将32位结果缩为16位。容量7077mAh时：
+
+```
+60 * 7077 = 424620
+uint16_t(424620) = 31404
+```
+
+满电仍报告30mA时，原代码也会生成14154分钟的放电时间。两项结果均与现场读数吻合。
+Smart Battery规范1.1第5.1.18、5.1.19、5.1.20节规定：未处于相应放电/充电状态，
+相关时间返回65535表示未知/不适用；有效分钟数范围0..65534。
+
+现场另有一个更新周期出现平均电流31404mA，随后归零。当前证据不足以认定它与时间字段
+属于同一根因。本机苹果驱动的实际命令分支将0x0b（平均电流）与0x12（平均时间）分别处理，
+没有发现直接的字段混写；本分支不钳制、不重置电流，也不宣称修复了该异常。
+
+Windows安装记录将本机ACPI\PNP0C0A\0绑定到微软CmBatt_Inst（10.0.26100.9549）；
+这是标准Control Method Battery路径，按固件_BST读取电池。Windows官方接口在不能估算时
+返回BATTERY_UNKNOWN_TIME。Linux的ACPI电池实现同样区分未知值；它没有复用这里的SMBus模拟时间兜底。
+这些证据支持修改KEXT的换算/导出逻辑；目前没有理由为这项时间问题修改SSDT。
+循环次数和温度若要补齐，仍需当前固件方法和真实数据来源，不能移植旧SSDT或伪造值。
+
+## 两个独立开关
+
+| 启动参数 | 行为 |
+| --- | --- |
+| 无参数 | 原上游时间、电流、供电控制行为；仅增加分支版本/开关元数据 |
+| `-a51mbattime` | 开启A51m时间策略，不更改电流、容量、百分比或充放电标志 |
+| `-a51mbatobserve` | 只读观察原本已发生的读取和导出，不开启时间修复 |
+| 两者同时 | 时间修复和观察同时开启，记录修复前后的时间 |
+
+使用显式开关是因为黑苹果SMBIOS会伪装成苹果机型，不根据伪装的型号自动启用。
+时间策略实现于A51mBatteryPolicy.hpp，在上游状态/临界电量判断之后应用：
+
+- 非放电状态：RunTimeToEmpty、AverageTimeToEmpty为0xffff。
+- 非充电状态：AverageTimeToFull为0xffff。
+- 零/未知速率、无效容量、无法表示的估算为0xffff。
+- 容量乘60使用64位中间值；有效估算和有效的补充硬件时间仍保留。
+- 保留上游1.3.8的持续轮询和供电通知修复。
+
+即使上游通过容量校正推算出非零电流，本策略也不改动它。该路径只有时间估算会基于原始
+速率有效性处理，不把估计的电流当作原始硬件电流来证明时间有效。
+SMBus和原有SMC充电时间键使用同一份最终时间状态。
+
+## 只读观察的数据意义
+
+原始_BST在这里指**固件方法返回的四个数值**，不等同于物理电池寄存器或独立电流表测量。
+SMCBatteryManager是虚拟SMBus供应者，记录的回复也不是物理总线抓包。
+
+ACPIBattery读取现有_BST后，在转换前保存四个数；同一锁内发布规范化状态和观察序号。
+每个受观察的SMBus请求在读取字段时，复制相同序号的源快照：
+
+1. `prepared`：已有回复准备完成、请求成功入队。
+2. `before_native_completion`：调用上游completeRequest之前，重新记录该请求实际缓冲区。
+
+第二阶段保留第一阶段的预期命令/值和request_sequence，便于识别队列期间的改变。
+完成回调后不访问可能已释放的请求。请求指针只用于内部配对，**不导出内核地址**。
+这定位的是控制器交接之前的状态；若交接前正确而AppleSmartBattery字段异常，仍需继续查
+原生完成/发布路径，不能仅凭此断言苹果驱动有错。
+
+观察0x0a、0x0b、0x11、0x12、0x13。只记录现有数据，不新增EC/SMBus请求、内核钩子、
+充电控制、常驻App或launchd服务。关闭观察时不分配观察缓冲区。
+观察开启时，控制器预分配64个事件槽和64个待完成配对槽；总存储固定。
+事件覆盖数与因配对槽饱和/重复请求指针而丢弃的次数分别计数。
+IORegistry发布复用原有100ms定时器，在批量请求完成后进行；不在stateLock自旋锁内分配对象。
+
+### IORegistry属性和解码
+
+控制器SMCSMBusController提供：
+
+- `A51mBatteryRevision`：`1.3.8-a51m1`。
+- `A51mBatteryTimePolicyEnabled`：时间开关。
+- `A51mBatteryObserveActive`：观察存储是否成功启用。
+- `A51mBatteryTrace`：可选、固定大小OSData。
+
+```
+python3 Tools/dump_a51m_battery.py
+python3 Tools/dump_a51m_battery.py --input saved-ioreg.plist
+```
+
+工具只读取IORegistry或本地文件，不打开电池控制用户客户端，不发起SMBus事务。
+每次调用输出一次快照，带本机采集的wall/monotonic时间。它不安装后台任务。
+
+格式为小端64位字，共18000字节（本分支只验证x86_64）：
+
+- 10字头：magic `A51MBAT1`、schema=1、recordWords=35、capacity=64、used、nextIndex、total、overwritten、dropped、reserved=0。
+- 64条35字记录：9字事件头加26字源快照。布局定义见A51mBatteryTelemetry.hpp，解码字段见dump_a51m_battery.py。
+- 环形记录按event_sequence排序；request_sequence关联同一请求的准备/交接事件。
+- 源sequence=0表示尚无同一状态的_BST观察，不应据此归因。
+- 非零overwritten/dropped或缺少配对时，应报告证据缺口，不把缺项认定为丢失驱动通知。
+
+源快照还包含实际采用的补充方法配置、CBSS平均速率、上次容量和本次quickPoll标志，
+用来区分硬件补充速率与容量差兜底。单位标志和设计电压是驱动实际采用的转换上下文，
+不是完整的原始_BIX包。
+
+## 测试与编译
+
+```
+python3 Tests/A51mBattery/run.py
+xcodebuild -project VirtualSMC.xcodeproj -target SMCBatteryManager \
+  -configuration Release ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+```
+
+按上游构建要求提供Lilu开发头文件/库及MacKernelSDK；这些依赖和build目录不提交。
+无需修改Xcode工程来绕过本机构建环境。
+
+测试覆盖正常充放电、满电、零/未知速率、无效容量、16/32位边界、硬件时间、状态不一致，
+以及从真实更新代码提取的四种开关组合和电流保持行为。观察测试直接执行本分支的实际方法，
+注入排队后的命令/值改变，检查请求复用、饱和与无硬件修改。解码测试覆盖符号数、环形顺序、
+缓冲区改变与畸形输入。这些测试使用假状态/假请求，没有执行内核代码。
+
+默认使用UndefinedBehaviorSanitizer。可在支持的环境设置
+`A51M_TEST_SANITIZERS=address,undefined`运行ASan；本机Xcode所带ASan运行时在main之前因
+libpthread初始化失败，不能宣称该模式已通过。本机UBSan测试和Release编译通过。
+这不代替真实加载、充放电或长时间稳定性验收。
+
+## 部署状态
+
+本次授权只修改、测试并提交fork源代码；**未替换EFI、未启用启动参数、未加载新组件**。
+运行环境仍是官方SMCBatteryManager 1.3.8。下次部署需单独审核和备份，启动验收应同时核对
+UUID、A51mBatteryRevision、两个开关状态与原有电池行为。
+本修复不承诺修复历史突然断电、容量校准、循环次数、温度或桌面卡顿。
+
+## 参考
+
+- [Smart Battery Data Specification 1.1，§5.1.18–20](https://sbs-forum.org/specs/sbdat110.pdf)
+- [Windows BatteryEstimatedTime约定](https://learn.microsoft.com/en-us/windows/win32/api/batclass/nc-batclass-bclass_query_information_callback)
+- [Windows标准电池/ACPI读取路径](https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/battery-and-charging)
+- [Linux ACPI电池实现](https://github.com/torvalds/linux/blob/master/drivers/acpi/battery.c)
+- [上游1.3.8基线](https://github.com/acidanthera/VirtualSMC/tree/1.3.8)
+
+公开仓库仅保存实现、可复现实验和结论；原始机器日志、序列号、Windows系统文件与本地证据包不提交。

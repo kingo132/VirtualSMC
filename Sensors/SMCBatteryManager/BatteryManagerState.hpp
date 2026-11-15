@@ -8,6 +8,8 @@
 #ifndef BatteryManagerState_hpp
 #define BatteryManagerState_hpp
 
+#include "A51mBatteryTelemetry.hpp"
+
 /**
  *  Aggregated battery information
  */
@@ -87,6 +89,8 @@ struct BatteryInfo {
 	 *  Complete battery information
 	 */
 	State state {};
+	// Copied under the same lock as state; sequence zero means no observed _BST yet.
+	A51mBattery::Snapshot a51mSnapshot {};
 	uint16_t manufactureDate {0};
 	uint32_t designCapacity {0};
 	uint32_t technology {0};

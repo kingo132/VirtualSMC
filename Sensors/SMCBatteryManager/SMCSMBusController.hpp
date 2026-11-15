@@ -61,6 +61,23 @@ class EXPORT SMCSMBusController : public IOSMBusController {
 	 */
 	OSArray *requestQueue {nullptr};
 
+	// Allocated only for -a51mbatobserve. Internal request pointers are never exported.
+	struct A51mPending {
+		IOSMBusRequest *request {nullptr};
+		uint64_t command {0}, value {0};
+		uint64_t requestSequence {0};
+		A51mBattery::Snapshot source {};
+	};
+	struct A51mObserver {
+		A51mBattery::Trace trace {};
+		A51mPending pending[A51mBattery::Trace::Capacity] {};
+		bool dirty {false};
+	};
+	A51mObserver *a51mObserver {nullptr};
+	void observePrepared(IOSMBusRequest *request, const A51mBattery::Snapshot &source);
+	void observeCompletion(IOSMBusRequest *request);
+	void publishObservation();
+
 	/**
 	 *  Create battery date in AppleSmartBattery format
 	 *
@@ -83,6 +100,7 @@ public:
 	 *  @return true on success.
 	 */
 	bool init(OSDictionary *properties) override;
+	void free() override;
 
 	/**
 	 *  Decide on target compatibility.

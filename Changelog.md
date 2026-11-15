@@ -1,5 +1,10 @@
 VirtualSMC Changelog
 ====================
+#### A51m battery branch (based on v1.3.8)
+- Added optional `-a51mbattime` time-state/unknown-value handling without changing currents or capacity
+- Added independent `-a51mbatobserve` bounded source/reply tracing with a read-only decoder
+- These changes are source-tested and build-tested; real loading and electrical accuracy remain unverified
+
 #### v1.3.8
 - Reduced unneeded power source notifications to remove repeated "PMRD: clamshell closed 0, disabled 0/0, desktopMode 0, ac 0" messages in kernel log
 - Fixed freezing of battery percentage when the battery is 100% charged initially but the system is connected to an insufficiently powerful AC adapter

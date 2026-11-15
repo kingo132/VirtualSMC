@@ -47,6 +47,10 @@ public:
 	 */
 	bool quickPollDisabled {true};
 
+	// Independent explicit opt-ins; no model auto-detection on spoofed SMBIOS.
+	bool a51mTimePolicyEnabled {false};
+	bool a51mObserveEnabled {false};
+
 	/**
 	 *  State lock, every state access must be guarded by this lock
 	 */

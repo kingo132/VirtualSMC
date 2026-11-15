@@ -6,6 +6,8 @@
 //
 
 #include "ACPIBattery.hpp"
+#include "A51mBatteryPolicy.hpp"
+#include <Headers/kern_time.hpp>
 #include <IOKit/battery/AppleSmartBatteryCommands.h>
 #include <Headers/kern_util.hpp>
 #include <Headers/kern_compat.hpp>
@@ -289,6 +291,10 @@ bool ACPIBattery::updateRealTimeStatus(bool quickPoll) {
 	st.presentRate = getNumberFromArray(status, BSTPresentRate);
 	st.remainingCapacity = getNumberFromArray(status, BSTRemainingCapacity);
 	st.presentVoltage = getNumberFromArray(status, BSTPresentVoltage);
+	// Preserve the existing _BST result before unit conversion, clamping or estimation.
+	const uint32_t rawState = st.state, rawRate = st.presentRate;
+	const uint32_t rawCapacity = st.remainingCapacity, rawVoltage = st.presentVoltage;
+	const uint32_t previousCapacity = st.lastRemainingCapacity;
 	if (st.powerUnitIsWatt) {
 		st.presentRate = st.presentRate * 1000 / st.designVoltage;
 		st.remainingCapacity = st.remainingCapacity * 1000 / st.designVoltage;
@@ -416,10 +422,53 @@ bool ACPIBattery::updateRealTimeStatus(bool quickPoll) {
 	st.bogus = bogus;
 	st.critical = critical;
 
+	A51mBattery::Snapshot observation {};
+	if (a51mObserve) {
+		observation.sequence = ++a51mObservationSequence;
+		observation.sampleNs = getCurrentTimeNs();
+		observation.rawState = rawState;
+		observation.rawRate = rawRate;
+		observation.rawCapacity = rawCapacity;
+		observation.rawVoltage = rawVoltage;
+		observation.powerUnitIsWatt = st.powerUnitIsWatt;
+		observation.designVoltage = st.designVoltage;
+		observation.state = st.state;
+		observation.presentRate = st.presentRate;
+		observation.averageRate = st.averageRate;
+		observation.signedPresentRate = st.signedPresentRate;
+		observation.signedAverageRate = st.signedAverageRate;
+		observation.remainingCapacity = st.remainingCapacity;
+		observation.lastFullChargeCapacity = st.lastFullChargeCapacity;
+		observation.upstreamRuntime = st.runTimeToEmpty;
+		observation.upstreamAverageTime = st.averageTimeToEmpty;
+		observation.upstreamFullTime = st.timeToFull;
+		observation.policyEnabled = a51mTimePolicy;
+		observation.supplementConfig = uint32_t(supplementConfig);
+		observation.previousCapacity = previousCapacity;
+		observation.quickPoll = quickPoll;
+		observation.hardwareAverageRate = st.signedAverageRateHW;
+	}
+	if (a51mTimePolicy) {
+		const bool validCapacity = rawCapacity != 0 && rawCapacity != BatteryInfo::ValueUnknown;
+		const bool validRate = rawRate != 0 && rawRate != BatteryInfo::ValueUnknown;
+		const bool validAverage = (supplementConfig & (1U << BSSAverageRate)) ?
+			st.signedAverageRateHW != 0 : validRate;
+		A51mBattery::applyTimePolicy(st, validCapacity, validRate, validAverage,
+			(supplementConfig & (1U << BSSTimeToEmpty)) != 0,
+			(supplementConfig & (1U << BSSTimeToFull)) != 0);
+	}
+	if (a51mObserve) {
+		observation.runtime = st.runTimeToEmpty;
+		observation.averageTime = st.averageTimeToEmpty;
+		observation.fullTime = st.timeToFull;
+	}
+
 	acpi->release();
 
 	IOSimpleLockLock(batteryInfoLock);
 	batteryInfo->state = st;
+	if (a51mObserve)
+		batteryInfo->a51mSnapshot = observation;
 	IOSimpleLockUnlock(batteryInfoLock);
 
 	// one more poll when a stats update is needed but already full
