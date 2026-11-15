@@ -64,8 +64,8 @@ class EXPORT SMCBatteryManager : public IOService {
 	static constexpr SMC_KEY KeyTB0T(size_t i) { return SMC_MAKE_IDENTIFIER('T','B',KeyIndexes[i],'T'); }
 
 	// Keys used in BigSur 10.16 and later
-#if 0
 	static constexpr SMC_KEY KeyBNCB = SMC_MAKE_IDENTIFIER('B','N','C','B');
+#if 0
 	static constexpr SMC_KEY KeyCHII = SMC_MAKE_IDENTIFIER('C','H','I','I');
 	static constexpr SMC_KEY KeyAC_W = SMC_MAKE_IDENTIFIER('A','C','-','W');
 	static constexpr SMC_KEY KeyD0PT(size_t i) { return SMC_MAKE_IDENTIFIER('D',KeyIndexes[i],'P','T'); }

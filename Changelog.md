@@ -1,11 +1,18 @@
 VirtualSMC Changelog
 ====================
+#### A51m revision 1.3.8-a51m3
+- Fix the a51m2 boot regression: without BNCB, Apple infers battery presence from BCxV key definitions; omitting all of them reported zero slots and no installed battery
+- Provide BNCB from the existing ACPI-backed virtual battery-slot count when metadata omission is enabled; do not invent or publish physical cell-voltage measurements
+- Preserve the previous one-slot emulation topology independently of unavailable measurement fields; leave the flag-off compatibility path unchanged
+- Extend real registration tests to verify the independent slot descriptor; add exact-image native startup decision fixtures that reproduce a51m2 failure and the corrected presence result
+- Do not use a51m2 with `-a51mbatmeta`. Its isolated missing-key test did not cover startup presence. Live acceptance of a51m3 still requires an authorized reboot
+
 #### A51m revision 1.3.8-a51m2
 - Add independent `-a51mbatmeta` opt-in to omit the synthetic ACID adapter descriptor and BC1V-family SMC cell-voltage keys
 - Preserve AC-presence detection, real current/voltage/capacity, time policy and observation behavior; do not substitute zero or 65535 for missing metadata
 - Publish one shared revision marker on the battery plugin and virtual SMBus controller
 - Add 54 actual key-registration fixture cases covering opt-in, OS generation, adapter count and battery count
-- Release build and host regressions are verified; post-reboot field omission and UI acceptance remain pending
+- Post-boot acceptance failed on the tested Intel image: the entire battery module disappeared. Superseded by a51m3; do not enable this version's metadata option
 - This SMC-path change does not alter legacy raw SMBus cell placeholders, establish real cycle counts or fix every unsupported metadata field
 
 #### A51m battery branch (based on v1.3.8)

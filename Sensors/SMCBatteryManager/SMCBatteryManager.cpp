@@ -128,15 +128,24 @@ bool SMCBatteryManager::start(IOService *provider) {
 	VirtualSMCAPI::addKey(KeyCHBV, vsmcPlugin.data, VirtualSMCAPI::valueWithUint16(8000, new CHBV));
 	VirtualSMCAPI::addKey(KeyCHLC, vsmcPlugin.data, VirtualSMCAPI::valueWithUint8(1, new CHLC));
 
-	if (getKernelVersion() >= KernelVersion::BigSur && !omitSyntheticMetadata) {
-		for (size_t i = 0; i < batCount; i++) {
-			VirtualSMCAPI::addKey(KeyBC1V(i+1), vsmcPlugin.data, VirtualSMCAPI::valueWithUint16(defaultBatteryCellVoltage));
+	if (getKernelVersion() >= KernelVersion::BigSur) {
+		if (omitSyntheticMetadata) {
+			// Preserve the existing virtual battery-slot topology independently of
+			// cell measurements. Apple otherwise infers battery presence from BCxV
+			// key definitions and treats their absence as no installed battery.
+			// This is an emulated slot count, not a measured physical cell count.
+			VirtualSMCAPI::addKey(KeyBNCB, vsmcPlugin.data, VirtualSMCAPI::valueWithUint8(batCount));
+			setProperty("A51mBatteryLogicalSlotCount", static_cast<uint64_t>(batCount), 32);
+		} else {
+			for (size_t i = 0; i < batCount; i++) {
+				VirtualSMCAPI::addKey(KeyBC1V(i+1), vsmcPlugin.data, VirtualSMCAPI::valueWithUint16(defaultBatteryCellVoltage));
 #if 0
 			VirtualSMCAPI::addKey(KeyD0IR(i), vsmcPlugin.data, VirtualSMCAPI::valueWithUint16(5000));
 			VirtualSMCAPI::addKey(KeyD0VM(i), vsmcPlugin.data, VirtualSMCAPI::valueWithUint16(5000));
 			VirtualSMCAPI::addKey(KeyD0VR(i), vsmcPlugin.data, VirtualSMCAPI::valueWithUint16(5000));
 			VirtualSMCAPI::addKey(KeyD0VX(i), vsmcPlugin.data, VirtualSMCAPI::valueWithUint16(5000));
 #endif
+			}
 		}
 
 #if 0

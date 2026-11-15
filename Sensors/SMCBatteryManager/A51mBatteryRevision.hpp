@@ -2,6 +2,6 @@
 #ifndef A51M_BATTERY_REVISION_HPP
 #define A51M_BATTERY_REVISION_HPP
 namespace A51mBattery {
-static constexpr const char *Revision = "1.3.8-a51m2";
+static constexpr const char *Revision = "1.3.8-a51m3";
 }
 #endif

@@ -8,6 +8,9 @@ Advanced Apple SMC emulator in the kernel. Requires [Lilu](https://github.com/vi
 This fork's `a51m-battery-telemetry` branch adds independent opt-ins for A51mR2
 battery time corrections, bounded read-only tracing, and omission of synthetic
 adapter/cell SMC metadata. All three features are disabled by default.
+Revision a51m2 had a metadata-option startup regression and must not be used
+with `-a51mbatmeta`. Revision a51m3 separates the virtual battery topology from
+unavailable measurements; live post-boot acceptance remains required.
 See [A51m battery changes, tests and deployment limits](Docs/A51mBattery.md).
 
 English (Current)  

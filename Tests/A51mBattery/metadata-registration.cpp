@@ -1,27 +1,30 @@
 // Owned fixtures for the actual key-registration blocks. No hardware access.
 #include <set>
+#include <map>
 #include <cassert>
 #include <cstddef>
 #include <iostream>
 #include <string>
-bool testFlag=false;int testVersion=25; bool recorded=false;
+bool testFlag=false;int testVersion=25; bool recorded=false; unsigned slotCount=0;
 bool checkKernelArgument(const char* name) {assert(std::string(name)=="-a51mbatmeta");return testFlag;}
 void setProperty(const char*,bool v){recorded=v;}
+void setProperty(const char*,uint64_t value,int){slotCount=static_cast<unsigned>(value);}
 int getKernelVersion(){return testVersion;}
 namespace KernelVersion {constexpr int BigSur=20;}
 constexpr unsigned short defaultBatteryCellVoltage=16000;
-constexpr int KeyACEN=1,KeyACFP=2,KeyACID=3,KeyACIN=4,SmcKeyTypeCh8s=0;
+constexpr int KeyACEN=1,KeyACFP=2,KeyACID=3,KeyACIN=4,KeyBNCB=5,SmcKeyTypeCh8s=0;
 int KeyBC1V(std::size_t i){return 100+int(i);}
 struct ACIN{};struct ACID{};
 struct State {unsigned adapterCount=0;};State st;
 struct BatteryManager{static State* getShared(){return &st;}};
-struct {std::set<int> data;} vsmcPlugin;
+struct {std::map<int,int> data;} vsmcPlugin;
 namespace VirtualSMCAPI {
  template<class T> int valueWithUint8(int,T* p){delete p;return 0;}
+ int valueWithUint8(int value){return value;}
  template<class T> int valueWithFlag(bool,T* p){delete p;return 0;}
  template<class T> int valueWithData(void*,int,int,T* p){delete p;return 0;}
  int valueWithUint16(int){return 0;}
- void addKey(int k,std::set<int>& d,int){assert(d.insert(k).second);}
+ void addKey(int k,std::map<int,int>& d,int value){assert(d.emplace(k,value).second);}
 }
 void productionRegistration(std::size_t batCount) {
 /* ACTUAL_REGISTRATION */
@@ -33,8 +36,10 @@ int main(){int cases=0;
  assert(recorded==flag);
  for(int k:{KeyACEN,KeyACFP,KeyACIN})assert(vsmcPlugin.data.count(k)==(adapters>0));
  assert(vsmcPlugin.data.count(KeyACID)==(adapters>0&&!flag));
+ assert(vsmcPlugin.data.count(KeyBNCB)==(version>=20&&flag));
+ if(version>=20&&flag){assert(vsmcPlugin.data.at(KeyBNCB)==static_cast<int>(batteries));assert(slotCount==batteries);}
  for(std::size_t n=1;n<=2;n++)assert(vsmcPlugin.data.count(KeyBC1V(n))==(n<=batteries&&version>=20&&!flag));
  cases++;
  }
- std::cout<<"PASS: "<<cases<<" actual key-registration cases; AC presence unchanged; synthetic keys omitted only with explicit opt-in\n";
+ std::cout<<"PASS: "<<cases<<" actual registration cases; AC presence and virtual slot count preserved; synthetic measurements omitted only with explicit opt-in\n";
 }

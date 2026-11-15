@@ -146,7 +146,7 @@ def metadata_registration_source():
     cpp=(SENSORS/'SMCBatteryManager.cpp').read_text()
     a=cpp.index('\tconst bool omitSyntheticMetadata')
     b=cpp.index('\tconst auto batCount',a)
-    registration=cpp[a:b]+function(cpp,'if (getKernelVersion() >= KernelVersion::BigSur && !omitSyntheticMetadata)')
+    registration=cpp[a:b]+function(cpp,'if (getKernelVersion() >= KernelVersion::BigSur)')
     template=(pathlib.Path(__file__).parent/'metadata-registration.cpp').read_text()
     return template.replace('/* ACTUAL_REGISTRATION */',registration)
 

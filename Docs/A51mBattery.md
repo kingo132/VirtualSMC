@@ -34,7 +34,7 @@ Windows安装记录将本机ACPI\PNP0C0A\0绑定到微软CmBatt_Inst（10.0.2610
 | 无参数 | 原上游时间、电流、供电控制行为；仅增加分支版本/开关元数据 |
 | `-a51mbattime` | 开启A51m时间策略，不更改电流、容量、百分比或充放电标志 |
 | `-a51mbatobserve` | 只读观察原本已发生的读取和导出，不开启时间修复 |
-| `-a51mbatmeta` | 不注册无真实数据来源的ACID适配器描述与BC1V系列单节电压SMC键；不改变接电检测 |
+| `-a51mbatmeta` | a51m3保留独立的虚拟电池结构描述，不注册无真实数据来源的ACID与BC1V测量项；a51m2此选项有启动回归，禁止使用 |
 | 前两者同时 | 时间修复和观察同时开启，记录修复前后的时间 |
 | 三者同时 | 在时间修复与观察之外，省略两项无真实来源的SMC元数据 |
 
@@ -77,13 +77,15 @@ IORegistry发布复用原有100ms定时器，在批量请求完成后进行；�
 
 控制器SMCSMBusController提供：
 
-- `A51mBatteryRevision`：`1.3.8-a51m2`；此前部署版为`1.3.8-a51m1`。
+- `A51mBatteryRevision`：`1.3.8-a51m3`；此前正常版为`1.3.8-a51m1`，a51m2未通过启动验收。
 - `A51mBatteryTimePolicyEnabled`：时间开关。
 - `A51mBatteryObserveActive`：观察存储是否成功启用。
 - `A51mBatteryTrace`：可选、固定大小OSData。
 
 电池插件SMCBatteryManager还提供相同的`A51mBatteryRevision`，以及
 `A51mBatterySyntheticSMCMetadataOmitted`布尔值，用于确认第三个开关。
+该开关开启时，a51m3还提供`A51mBatteryLogicalSlotCount`，表示兼容层的虚拟电池结构数量，
+不代表实测物理电芯数量，也不用于推算单节电压。
 
 ```
 python3 Tools/dump_a51m_battery.py
@@ -123,6 +125,14 @@ xcodebuild -project VirtualSMC.xcodeproj -target SMCBatteryManager \
 缓冲区改变与畸形输入。这些测试使用假状态/假请求，没有执行内核代码。
 另有54组测试直接提取实际SMC键注册代码，覆盖第三个开关、系统代际、适配器与电池数量，
 核对ACEN/ACFP/ACIN接电检测保留、ACID和BC1V只在显式开关开启时省略。
+测试同时核对a51m3独立BNCB描述的有无与数值。可另行运行精确版本原生启动分支测试：
+
+```
+python3 Tests/A51mBattery/native-startup.py /System/Library/Extensions/AppleSmartBatteryManager.kext/Contents/MacOS/AppleSmartBatteryManager
+```
+
+该测试校验原生镜像UUID及两个代码片段哈希，在自有对象与回调替身上执行启动识别与可选键判断。
+它复现a51m2的“无电池”，并验证独立结构描述允许电池存在而没有电压测量键；不是现场内核启动验收。
 
 默认使用UndefinedBehaviorSanitizer。可在支持的环境设置
 `A51M_TEST_SANITIZERS=address,undefined`运行ASan；本机Xcode所带ASan运行时在main之前因
@@ -133,13 +143,15 @@ libpthread初始化失败，不能宣称该模式已通过。本机UBSan测试�
 
 此前a51m1已获授权部署并重启：时间修复和观察开关生效，满电无效时间已返回未知，
 放电源数据、虚拟SMBus回复和系统读数在采样中吻合，31A异常未复现。
-a51m2的两项SMC元数据省略已获授权进入备份部署流程；**启动后的字段省略与界面验收仍待完成**。
-不热卸载电池驱动、不自动重启。下一次获准启动后核对加载UUID、a51m2版本标记、
+a51m2启动验收失败：系统记录`BatteryInstalled=0 cells:0`，电池容量/电压未建立，
+pmset和监控界面失去内置电池。已保留失败证据并准备正常版回退；不是iStat设置问题。
+a51m3修订基于下文已复现的启动依赖，**启动后的字段省略与界面验收仍待完成**。
+不热卸载电池驱动、不自动重启。下一次获准启动后核对加载UUID、a51m3版本标记、
 三个独立开关以及接电检测、电流、电压、容量和时间行为。
 用户确认此前关机是手动操作，不列为电池故障。本修复不承诺容量校准、真实循环次数、
 温度、31A异常或桌面卡顿已解决。
 
-## a51m2: omit synthetic SMC metadata
+## a51m3: separate topology from unavailable measurements
 
 The independent `-a51mbatmeta` opt-in stops registering two kinds of synthetic
 metadata that have no measurement source in this implementation:
@@ -150,6 +162,21 @@ metadata that have no measurement source in this implementation:
 The real AC-presence keys `ACEN`, `ACFP` and `ACIN` stay registered. Real current,
 pack voltage, capacity, battery status, the time policy and observer are not
 changed. Do not substitute zero or 65535 and call that a sensor reading.
+
+**a51m2 failed live boot acceptance and must not be used with this option.**
+The Apple startup notifier first reads `BNCB`. If it is absent, it probes BC4V
+through BC1V definitions and uses the highest present slot as the installed
+battery topology. Removing all cell keys while BNCB is absent sets the count
+to zero and calls `setBatteryInstalled(false)`. This is the exact dependency
+missed by the earlier optional-dictionary test, and matches the boot log.
+
+a51m3 publishes an independent BNCB descriptor from the existing ACPI-backed
+emulated battery-slot count, preserving the previous one-slot topology on the
+reference machine without pretending a physical cell voltage exists. This
+compatibility count is not a newly measured physical cell count. The optional
+cell-measurement keys remain absent. A key definition with a failed read is
+not sufficient: the current dictionary reader can still decode a zeroed
+buffer into a misleading 0 V reading, so that alternative is not used.
 
 The installed Apple consumer has an explicit missing-key decision path. Its
 SMC dictionary builder marks an unavailable key as NOOP and skips it. Owned
