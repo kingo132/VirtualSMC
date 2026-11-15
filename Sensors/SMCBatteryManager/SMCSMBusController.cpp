@@ -82,6 +82,7 @@ bool SMCSMBusController::start(IOService *provider) {
 	setProperty("IOSMBusSmartBatteryManager", kOSBooleanTrue);
 	setProperty("A51mBatteryRevision", A51mBattery::Revision);
 	setProperty("A51mBatteryTimePolicyEnabled", BatteryManager::getShared()->a51mTimePolicyEnabled);
+	setProperty("A51mDellTelemetryEnabled", BatteryManager::getShared()->a51mDellEnabled);
 	if (BatteryManager::getShared()->a51mObserveEnabled)
 		a51mObserver = new A51mObserver;
 	setProperty("A51mBatteryObserveActive", a51mObserver != nullptr);
@@ -229,7 +230,14 @@ IOSMBusStatus SMCSMBusController::startRequest(IOSMBusRequest *request) {
 					setReceiveData(transaction, value);
 					break;
 				}
-				case kBSerialNumberCmd:
+				case kBSerialNumberCmd: {
+					IOSimpleLockLock(BatteryManager::getShared()->stateLock);
+					const auto &raw=BatteryManager::getShared()->state.btInfo[0].a51mDellInfo;
+					if(raw.status==A51mDell::Status::Active && raw.has(A51mDell::Field::SerialNumber))
+						setReceiveData(transaction,raw.numeric[0x1c]);
+					IOSimpleLockUnlock(BatteryManager::getShared()->stateLock);
+					break;
+				}
 				case kBMaxErrorCmd:
 					break;
 				case kBRunTimeToEmptyCmd: {
@@ -496,8 +504,47 @@ void SMCSMBusController::observeCompletion(IOSMBusRequest *request) {
 }
 
 void SMCSMBusController::publishObservation() {
+	auto &manager = *BatteryManager::getShared();
+	if(manager.a51mDellEnabled) {
+		A51mDell::Telemetry raw {};
+		A51mDualAdapter::Telemetry dual {};
+		IOSimpleLockLock(manager.stateLock);
+		raw=manager.state.btInfo[0].a51mDellInfo;
+		dual=manager.state.btInfo[0].a51mDualAdapterInfo;
+		IOSimpleLockUnlock(manager.stateLock);
+		if(raw.sequence!=a51mLastDellSequence) {
+			auto data=OSData::withBytes(&raw,sizeof(raw));
+			if(data) {
+				setProperty("A51mDellTelemetry",data);
+				setProperty("A51mDellTelemetrySchema",A51mDell::Schema,32);
+				data->release();
+				a51mLastDellSequence=raw.sequence;
+			}
+		}
+		if(dual.sequence!=a51mLastDualAdapterSequence) {
+			auto data=OSData::withBytes(&dual,sizeof(dual));
+			if(data) {
+				setProperty("A51mDualAdapterTelemetry",data);
+				data->release();
+				a51mLastDualAdapterSequence=dual.sequence;
+			}
+		}
+	}
 	if (!a51mObserver || !a51mObserver->dirty)
 		return;
+	// Copy under the existing state lock; allocate/publish only after unlocking.
+	A51mBattery::StaticInfo raw {};
+	IOSimpleLockLock(manager.stateLock);
+	raw = manager.state.btInfo[0].a51mStaticInfo;
+	IOSimpleLockUnlock(manager.stateLock);
+	if (raw.method) {
+		auto staticData = OSData::withBytes(&raw, sizeof(raw));
+		if (staticData) {
+			setProperty("A51mBatteryStaticInfo", staticData);
+			setProperty("A51mBatteryStaticInfoSchema", 1, 32);
+			staticData->release();
+		}
+	}
 	auto data = OSData::withBytes(&a51mObserver->trace, sizeof(a51mObserver->trace));
 	if (data) {
 		setProperty("A51mBatteryTrace", data);

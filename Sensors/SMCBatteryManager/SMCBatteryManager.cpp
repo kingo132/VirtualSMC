@@ -11,6 +11,7 @@
 #include "SMCBatteryManager.hpp"
 #include "KeyImplementations.hpp"
 #include "A51mBatteryRevision.hpp"
+#include "A51mAdapterExport.hpp"
 #include <IOKit/battery/AppleSmartBatteryCommands.h>
 #include <Headers/kern_version.hpp>
 
@@ -46,6 +47,7 @@ bool SMCBatteryManager::start(IOService *provider) {
 
 	setProperty("VersionInfo", kextVersion);
 	setProperty("A51mBatteryRevision", A51mBattery::Revision);
+	setProperty("A51mDellTelemetryEnabled", BatteryManager::getShared()->a51mDellEnabled);
 
 	// AppleSMC presence is a requirement, wait for it.
 	auto dict = IOService::nameMatching("AppleSMC");
@@ -207,6 +209,7 @@ EXPORT extern "C" kern_return_t ADDPR(kern_start)(kmod_info_t *, void *) {
 	lilu_get_boot_args("liludelay", &ADDPR(debugPrintDelay), sizeof(ADDPR(debugPrintDelay)));
 	ADDPR(debugEnabled) = checkKernelArgument("-vsmcdbg") || checkKernelArgument("-sbatdbg") || checkKernelArgument("-liludbgall");
 	BatteryManager::createShared();
+	A51mAdapter::init();
 	return KERN_SUCCESS;
 }
 

@@ -50,6 +50,8 @@ public:
 	// Independent explicit opt-ins; no model auto-detection on spoofed SMBIOS.
 	bool a51mTimePolicyEnabled {false};
 	bool a51mObserveEnabled {false};
+	bool a51mDellEnabled {false};
+	bool a51mAdapterExportEnabled {false};
 
 	/**
 	 *  State lock, every state access must be guarded by this lock

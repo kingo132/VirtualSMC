@@ -1,5 +1,17 @@
 VirtualSMC Changelog
 ====================
+#### A51m revision 1.3.8-a51m7 — boot-verified source update
+- Capture numeric `_BIF`/`_BIX` metadata already evaluated by the driver for optional diagnosis; do not copy ACPI model/serial strings into that observation record
+- Add opt-in, allowlisted Dell LegacyDiags reads for firmware battery metadata, including cycles and temperature; retain the existing ACPI current, voltage, capacity and charge-policy path
+- Use attached-supply selector 3 for the native adapter total, retaining selector-6 AC/identification validity checks; supersede the earlier static-330-W interpretation without introducing a constant 480-W fallback
+- Enrich only this plugin's native adapter dictionary after the original gated completion; preserve existing native watts and remove only plugin-owned invalid, detached or expired data
+- Cache independent WMAX input ratings only when count-before/count-after, firmware status, bounded values, source freshness and the exact LegacyDiags total agree; reject ambiguous single-input data
+- Refresh/invalidate through existing polling and AC/wake notifications; add no timer, service, firmware control write or direct SMI access
+- Add read-only cached-data tools, default identity redaction, malformed/slow/invalid transport tests, ownership/lifecycle tests, decoder tests and exact-image Apple decision/arithmetic fixtures
+- Intel Release build and basic real post-boot acceptance passed: the a51m7 revision loaded, firmware cycles/temperature were read, native rated watts and two-input ratings agreed. These are observations, not hardcoded replacements
+- Full plug/wake/long-uptime/UI acceptance remains open. The historical 31 A reading, GPU/desktop stalls, Universal Control and brightness/shutdown issues are not declared fixed
+- Only SMCBatteryManager source/support changes are included in this update; unrelated local sensor experiments and private captures are excluded
+
 #### A51m revision 1.3.8-a51m3
 - Fix the a51m2 boot regression: without BNCB, Apple infers battery presence from BCxV key definitions; omitting all of them reported zero slots and no installed battery
 - Provide BNCB from the existing ACPI-backed virtual battery-slot count when metadata omission is enabled; do not invent or publish physical cell-voltage measurements

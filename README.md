@@ -5,13 +5,60 @@ VirtualSMC
 
 Advanced Apple SMC emulator in the kernel. Requires [Lilu](https://github.com/vit9696/Lilu) for full functioning.
 
-This fork's `a51m-battery-telemetry` branch adds independent opt-ins for A51mR2
-battery time corrections, bounded read-only tracing, and omission of synthetic
-adapter/cell SMC metadata. All three features are disabled by default.
-Revision a51m2 had a metadata-option startup regression and must not be used
-with `-a51mbatmeta`. Revision a51m3 separates the virtual battery topology from
-unavailable measurements; live post-boot acceptance remains required.
-See [A51m battery changes, tests and deployment limits](Docs/A51mBattery.md).
+### A51m R2 fork: 1.3.8-a51m7
+
+The maintained A51m changes are on
+[`a51m-battery-telemetry`](https://github.com/kingo132/VirtualSMC/tree/a51m-battery-telemetry).
+`master` follows upstream; this is a model-specific SMCBatteryManager extension,
+not a separate version of Apple's battery driver. Upstream attribution and
+licenses are retained.
+
+The a51m7 source was built for Intel and verified loaded on an Area-51m R2 with
+BIOS 1.37.0 and macOS 26.7.1 (25G241). Actual firmware reads supplied battery
+cycles and temperature, native adapter rated power, and validated ratings for
+two attached inputs. In the tested two-240-W configuration, the native total
+was 480 W and the independent firmware reports were 240 + 240 W. Those are
+observed values, never fallback constants. They describe rated supply capacity,
+not wall consumption, per-port electrical limits or guaranteed sustained power.
+
+| Boot argument | Effect | Default |
+| --- | --- | --- |
+| `-a51mbattime` | Return unknown for inapplicable/invalid battery time estimates; preserve valid estimates and original current/capacity | Off |
+| `-a51mbatobserve` | Record bounded source/reply and numeric ACPI metadata for local diagnosis | Off |
+| `-a51mbatmeta` | Omit synthetic adapter/cell measurements while retaining the virtual battery-presence topology | Off |
+| `-a51mbatdell` | Read allowlisted Dell firmware metadata through its serialized LegacyDiags ACPI endpoint | Off |
+| `-a51mbatadapter` | Publish validated attached rated power in the native adapter dictionary and cache validated dual-input ratings; requires `-a51mbatdell` and `-a51mbatmeta` | Off |
+
+The native adapter bridge requires Darwin 25 and the exact tested Apple driver
+image. An unrecognized image is refused; an OS update needs revalidation, not
+removal of the gate. Failed, stale or inconsistent optional data is invalidated
+rather than replaced by guessed watts, current, voltage or identity. Firmware
+calls use the existing battery poll; no new daemon, periodic recovery service,
+charge-control write or direct SMI-port writer is installed. A slow-return guard
+stops later calls; it cannot interrupt firmware execution.
+
+The firmware count/pair, native adapter dictionary and booted revision have
+passed basic acceptance. Full detach/reattach, sleep/wake, long-uptime and every
+consumer's UI remain separate acceptance work. iStat has one supported adapter
+row; this does not add two per-input rows. The historical 31 A excursion is
+unresolved. GPU stalls, Universal Control, wake brightness and shutdown waits
+are not fixed by this battery revision.
+
+Read cached adapter data without invoking firmware:
+
+```sh
+python3 Tools/dump_a51m_adapters.py
+```
+
+Diagnostic records can contain battery identity. The Dell decoder redacts it by
+default; keep raw logs, private opt-in identity dumps, EFI configuration and
+SMBIOS identifiers out of issues and commits. Back up the working EFI before
+deployment and retain the previous battery KEXT for rollback. Do not hot-unload
+the battery driver. Revision a51m2 has a known battery-presence regression with
+`-a51mbatmeta` and must not be deployed.
+
+See [implementation, tests and acceptance limits](Docs/A51mBattery.md) and the
+[changelog](Changelog.md). This source publication does not change the local EFI.
 
 English (Current)  
 [简体中文](README_zh.md)  

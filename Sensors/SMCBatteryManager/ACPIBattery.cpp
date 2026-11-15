@@ -7,6 +7,7 @@
 
 #include "ACPIBattery.hpp"
 #include "A51mBatteryPolicy.hpp"
+#include "A51mDellMetadata.hpp"
 #include <Headers/kern_time.hpp>
 #include <IOKit/battery/AppleSmartBatteryCommands.h>
 #include <Headers/kern_util.hpp>
@@ -52,6 +53,17 @@ bool ACPIBattery::getBatteryInfo(BatteryInfo &bi, bool extended) {
 	if (!info) {
 		object->release();
 		return false;
+	}
+
+	// Observe the package already evaluated above, before conversion or fallback.
+	// Never evaluate an extra ACPI method or retain model/serial/OEM strings.
+	if (a51mObserve) {
+		auto &raw = bi.a51mStaticInfo;
+		raw.method = extended ? 2 : 1;
+		raw.packageCount = info->getCount();
+		for (uint32_t i = 0; i < 16; ++i)
+			raw.values[i] = i < (extended ? 16U : 9U) ?
+				getNumberFromArray(info, i) : BatteryInfo::ValueUnknown;
 	}
 
 	if (extended) {
@@ -173,10 +185,29 @@ bool ACPIBattery::getBatteryInfo(BatteryInfo &bi, bool extended) {
 			bi.cycle = 0;
 	}
 
+	if (a51mDellEnabled && id==0) {
+		refreshDellInfo();
+		applyDellInfo(bi);
+	}
 	return true;
 }
 
+void ACPIBattery::applyDellInfo(BatteryInfo &info) {
+	A51mDell::applyMetadata(a51mDell.data,info);
+	info.a51mDualAdapterInfo=a51mDualAdapter.data;
+}
+
+void ACPIBattery::refreshDellInfo() {
+	bool updated=a51mDell.refresh(true,a51mAdapterExport);
+	if(a51mAdapterExport) {
+		auto total=A51mAdapter::designWatts(a51mDell.data,getCurrentTimeNs(),true);
+		if(updated) a51mDualAdapter.refresh(true,total,a51mDell.data.adapterSampledNs);
+		else if(!total) a51mDualAdapter.invalidate();
+	}
+}
+
 bool ACPIBattery::updateRealTimeStatus(bool quickPoll) {
+	if(a51mDellEnabled && id==0) refreshDellInfo();
 	OSObject *acpi = nullptr;
 	if (device->evaluateObject(AcpiBatteryStatus, &acpi) != kIOReturnSuccess) {
 		//CHECKME: unsure why this should be done here, this may be a mistake
@@ -467,6 +498,7 @@ bool ACPIBattery::updateRealTimeStatus(bool quickPoll) {
 
 	IOSimpleLockLock(batteryInfoLock);
 	batteryInfo->state = st;
+	if(a51mDellEnabled && id==0) applyDellInfo(*batteryInfo);
 	if (a51mObserve)
 		batteryInfo->a51mSnapshot = observation;
 	IOSimpleLockUnlock(batteryInfoLock);
@@ -494,6 +526,8 @@ bool ACPIBattery::updateStaticStatus(bool *calculatedACAdapterConnection) {
 			IOSimpleLockUnlock(batteryInfoLock);
 		} else if (!connected) {
 			// Disconnected, reset the state
+			a51mDell.invalidate();
+			a51mDualAdapter.invalidate();
 			*batteryInfo = BatteryInfo{};
 			IOSimpleLockUnlock(batteryInfoLock);
 			if (calculatedACAdapterConnection)

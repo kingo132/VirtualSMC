@@ -15,6 +15,9 @@
 #include <IOKit/pwr_mgt/RootDomain.h>
 #include <IOKit/IOTimerEventSource.h>
 #include "BatteryManagerState.hpp"
+#include "A51mDellAcpi.hpp"
+#include "A51mDualAdapterAcpi.hpp"
+#include "A51mAdapterPolicy.hpp"
 
 class ACPIBattery {
 public:
@@ -85,9 +88,12 @@ public:
 	 *  Actual constructor representing a real device with its own index and shared info struct
 	 */
 	ACPIBattery(IOACPIPlatformDevice *device, int32_t id, IOSimpleLock *lock, BatteryInfo *info,
-		bool timePolicy=false, bool observe=false) :
+		bool timePolicy=false, bool observe=false, bool dell=false, bool adapterExport=false) :
 		batteryInfoLock(lock), batteryInfo(info), a51mTimePolicy(timePolicy),
-		a51mObserve(observe), id(id), device(device) {}
+		a51mObserve(observe), a51mDellEnabled(dell), a51mAdapterExport(adapterExport), id(id), device(device) {}
+
+	void invalidateDell() { a51mDell.resume(); a51mDualAdapter.invalidate(); }
+	void invalidateDellAdapter() { a51mDell.adapterChanged(); a51mDualAdapter.invalidate(); }
 
 	/**
 	 *  Refresh battery static information
@@ -128,6 +134,12 @@ public:
 
 private:
 	bool a51mTimePolicy {false}, a51mObserve {false};
+	bool a51mDellEnabled {false};
+	bool a51mAdapterExport {false};
+	A51mDell::AcpiReader a51mDell {};
+	A51mDualAdapter::Reader a51mDualAdapter {};
+	void refreshDellInfo();
+	void applyDellInfo(BatteryInfo &info);
 	uint64_t a51mObservationSequence {0};
 
 	uint32_t getNumberFromArray(OSArray *array, uint32_t index);

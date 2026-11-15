@@ -40,6 +40,7 @@ public:
 	 *  @return true if connected
 	 */
 	bool updateStatus();
+	bool owns(IOService *provider) const { return device == provider; }
 
 private:
 	/**

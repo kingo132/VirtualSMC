@@ -74,6 +74,8 @@ class EXPORT SMCSMBusController : public IOSMBusController {
 		bool dirty {false};
 	};
 	A51mObserver *a51mObserver {nullptr};
+	uint64_t a51mLastDellSequence {UINT64_MAX};
+	uint64_t a51mLastDualAdapterSequence {UINT64_MAX};
 	void observePrepared(IOSMBusRequest *request, const A51mBattery::Snapshot &source);
 	void observeCompletion(IOSMBusRequest *request);
 	void publishObservation();

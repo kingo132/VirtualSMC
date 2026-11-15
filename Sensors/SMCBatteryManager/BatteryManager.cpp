@@ -63,6 +63,8 @@ void BatteryManager::checkDevices() {
 	bool externalPowerConnected = false;
 	for (uint32_t i = 0; i < adapterCount; i++)
 		externalPowerConnected |= adapters[i].updateStatus();
+	if (initialCheckDevices && adapterCount && externalPowerConnected!=prevExternalPowerConnected)
+		for (uint32_t i=0;i<batteriesCount;++i) batteries[i].invalidateDellAdapter();
 
 	bool batteriesAreFull = false;
 	if (batteriesConnected) {
@@ -128,7 +130,7 @@ bool BatteryManager::findBatteries() {
 				if (device) {
 					DBGLOG("bmgr", "found ACPI PNP battery %s", safeString(entry->getName()));
 					batteries[batteriesCount] = ACPIBattery(device, batteriesCount, stateLock, &state.btInfo[batteriesCount],
-						a51mTimePolicyEnabled, a51mObserveEnabled);
+						a51mTimePolicyEnabled, a51mObserveEnabled, a51mDellEnabled, a51mAdapterExportEnabled);
 					batteryNotifiers[batteriesCount] = device->registerInterest(gIOGeneralInterest, acpiNotification, this);
 					if (!batteryNotifiers[batteriesCount]) {
 						SYSLOG("bmgr", "battery find is unable to register interest for battery notifications");
@@ -209,6 +211,14 @@ IOReturn BatteryManager::acpiNotification(void *target, void *refCon, UInt32 mes
 			atomic_store_explicit(&self->quickPoll, ACPIBattery::QuickPollCount, memory_order_release);
 
 		IOLockLock(self->mainLock);
+		if (self->a51mAdapterExportEnabled) {
+			for (uint32_t i=0;i<self->adapterCount;++i) {
+				if (!self->adapters[i].owns(provider)) continue;
+				for (uint32_t j=0;j<self->batteriesCount;++j)
+					self->batteries[j].invalidateDellAdapter();
+				break;
+			}
+		}
 		self->checkDevices();
 		IOLockUnlock(self->mainLock);
 
@@ -222,6 +232,7 @@ IOReturn BatteryManager::acpiNotification(void *target, void *refCon, UInt32 mes
 
 void BatteryManager::wake() {
 	IOLockLock(mainLock);
+	for (uint32_t i=0;i<batteriesCount;++i) batteries[i].invalidateDell();
 	checkDevices();
 	IOLockUnlock(mainLock);
 
@@ -376,6 +387,9 @@ void BatteryManager::createShared() {
 		PANIC("bmgr", "failed to allocate battery manager");
 	instance->a51mTimePolicyEnabled = checkKernelArgument("-a51mbattime");
 	instance->a51mObserveEnabled = checkKernelArgument("-a51mbatobserve");
+	instance->a51mDellEnabled = checkKernelArgument("-a51mbatdell");
+	instance->a51mAdapterExportEnabled = instance->a51mDellEnabled &&
+		checkKernelArgument("-a51mbatmeta") && checkKernelArgument("-a51mbatadapter");
 	instance->mainLock = IOLockAlloc();
 	if (!instance->mainLock)
 		PANIC("bmgr", "failed to allocate main battery manager lock");

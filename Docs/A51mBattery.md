@@ -1,7 +1,168 @@
 # A51mR2电池时间修复与只读观察
 
+## Published source: a51m7 — attached total and independent input ratings
+
+The previous a51m6 bridge booted and reached iStat, but its selector-6 static
+330 W value did not represent the owner's attached two 240 W supplies. The
+correction uses selector 3, matching Windows IAdaptor::GetDesignPower, while
+retaining selector-6 AC-present/PSID flags, image/version gating, native-data
+precedence, freshness/invalidity removal and the existing publication boundary.
+No fixed 480 W value is introduced. This is rated available supply power, not
+measured wall consumption or a guarantee of CPU/GPU sustained limits.
+
+The same opt-in also queries the current A51m R2 BIOS 1.37.0 AMW1 WMAX method
+0x1c (PowerInformation): operation 1 reads the connected count, operation 2
+reads EC A1WH:A1WL / A2WH:A2WL for firmware ports 0/1, and operation 4 reads
+firmware status. Exact AWCC GUID/AX descriptor, endpoint and integer-return
+checks precede the bounded five-query sequence. No control operation or EC/
+SMI write is issued. A returned call exceeding 20 ms stops further AWCC reads
+without disabling the independent working battery/cycle reader. This is a
+post-return guard, not a preemptive firmware timeout.
+
+A pair is valid only with two attached inputs both before and after the read,
+bounded nonzero ratings, accepted firmware status and a sum equal to the exact
+fresh LegacyDiags total snapshot used for the read. A single connected input
+does not identify which rating register is current; no per-port value is
+presented in that ambiguous case. AC change/wake invalidation and the existing
+minute poll handle refresh without a new timer, daemon or app. Same-count
+physical swaps without firmware notifications remain bounded snapshot data,
+not continuous measurements. Firmware port order is not identified left/right.
+
+`A51mDualAdapterTelemetry` is a separate 72-byte schema-1 cache; the existing
+1520-byte Dell telemetry ABI is unchanged. Read the validated total and pair
+without triggering firmware calls:
+
+```
+python3 Tools/dump_a51m_adapters.py
+```
+
+iStat's existing single Power Adapter row receives the corrected total. This
+change does not add two iStat UI rows: no supported per-input iStat display
+interface has been established. The independent cache and reader support
+honest per-input inspection without pretending two new rows exist.
+
+Production policy/publication/ACPI reader fixtures, invalidation/freshness/
+count-race/malformed-data cases, battery regression/startup cases and Intel
+Release build passed. a51m7 UUID `742CD514-F5D5-3307-BA43-625F9F968DEE` is
+now verified loaded after the user restart. Native AdapterDetails reports 480 W;
+fresh validated WMAX input ratings are 240 + 240 W, with stable before/after
+count 2 and no failures across repeated minute polls. Firmware status 2 remains
+visible and is not rewritten to normal. Two full EFI backups were
+verified; only the battery executable changed within OC. The existing Shell
+restore entry returns this executable to the previous booted a51m6, with its
+previous broader recovery script preserved. Actual iStat menu display,
+detach/reattach, sleep/wake and extended-uptime acceptance remain open.
+Live per-port success is based on the loaded driver and real firmware returns,
+not the host fixtures. The user authorized publishing the verified a51m7
+battery source; unrelated SMCDellSensors work remains outside this update.
+
+### Reproducible verification and privacy
+
+Run these host-side fixtures from the repository root. They compile or decode
+owned data and do not load a KEXT or call live firmware:
+
+```sh
+python3 Tests/A51mBattery/run.py
+python3 Tests/A51mBattery/static-info.py
+python3 Tests/A51mBattery/dell.py
+python3 Tests/A51mBattery/dell-decoder.py
+python3 Tests/A51mBattery/dual-decoder.py
+python3 Tests/A51mBattery/watch-decoder.py
+python3 Tests/A51mBattery/adapter-publication.py
+```
+
+`adapter-policy.py PATH`, `native-startup.py PATH` and `native-adapter.py PATH`
+additionally require a local copy of the exact tested Intel AppleSmartBatteryManager
+image (installed or from the matching KDK) and refuse an unknown image. No image
+is downloaded or distributed by the tests. The optional `dell-acpi-roundtrip.py --asl PATH`
+requires ACPICA tools and a private archived DSDT with the expected converter
+hash; the test replaces firmware access with a stub. Neither Apple binaries,
+private DSDT/logs nor local build products belong in this source publication.
+Build SMCBatteryManager using the upstream Lilu/MacKernelSDK dependencies and
+the Intel Release target. Offline fixtures and a successful build do not
+replace real detach/reattach, wake or consumer-UI acceptance.
+
+## Historical post-boot acceptance: a51m5, 2026-11-15
+
+The new boot actually loaded SMCBatteryManager UUID
+`37715531-726D-39EB-8568-89ABD92C6F51`, revision `1.3.8-a51m5`.
+The four existing opt-ins remain enabled. Live Dell firmware requests succeeded
+and returned cycle count 21, changing temperature, manufacture date, and static
+design power 330 W / dynamic design power 480 W. These are current firmware
+returns, not constants substituted from the earlier Windows captures.
+AppleSmartBattery and the user's iStat panel both now report **21 cycles**.
+AppleSmartBattery also receives the actual temperature. String fields remain
+invalid; successful transport does not imply every returned field is usable.
+
+The native adapter dictionary is still `{FamilyCode: 0}` without `Watts`.
+That explains the missing adapter section: the read transport was implemented,
+but its results were not connected to the native adapter publication path.
+The prior staged candidate was not a completed iStat adapter-display fix.
+Adapter selector 1 returned 11400 and selector 2 returned 0, with units/meaning
+unverified; do not invent a 19.5 V/current pair to make the native V*I path
+produce a desired wattage. Selector 6's static rating and selector 3's dynamic
+design power are different reports, not independently identified bricks or
+real-time wall consumption. No unsupported identity/voltage/current field is
+added to the native adapter dictionary.
+
+Historical a51m6 implementation (subsequently booted; its static-watt
+interpretation was rejected and is superseded by a51m7 above):
+`-a51mbatadapter` additionally requires the Dell-read and synthetic-metadata
+opt-ins, Darwin 25 and the exact tested AppleSmartBatteryManager image UUID.
+Its candidate hook runs the native gated SMC completion first; after adapter
+or battery-data updates it enriches only this plugin's native power-source
+dictionary with the valid current static design rating (330 W in this boot).
+It preserves an original native `Watts` value, uses a separate ownership marker,
+and removes its own rating on invalid/disconnected/expired data. The native
+poll's existing `updateStatus` boundary is preserved; no partial-poll flush,
+new service, direct I/O, fake rated voltage/current or iStat patch is added.
+
+When explicitly enabled, existing minute polling refreshes all seven adapter
+fields (ten allowlisted calls including signature/cycle/temperature per minute,
+not the 29-call attachment burst). AC adapter notifications also invalidate
+same-presence changes; a one-second request floor coalesces storms. The reader
+regressions, rating/image-gate host tests, original battery regression suite and
+Intel Release build have passed. The production publication function now also passes owned lifecycle tests:
+330/370 W replacement, preservation of existing Apple Watts/other fields,
+unplug/expiry/invalid removal, wrong provider isolation and allocation-failure
+ownership. They verify that no extra updateStatus call is introduced. These
+fixtures do not execute Apple's full driver or prove powerd/iStat acceptance;
+that remains a next-boot requirement.
+
+The independently staged SMCDellSensors activity-counter fix is now loaded
+with UUID `59405B15-1B92-3A85-A63E-A7C9A4DC4C49`, with its live fix/revision
+properties set. That does not prove all historical desktop stutter is cured.
+
+## a51m4已通过启动核对：静态来源观察
+
+用户重启后，控制器和插件均报告`1.3.8-a51m4`，三个开关有效、电池存在。
+新观察实际捕获当前`_BIX`20项包：单位mAh、设计7895、满充7077、循环0。
+因此循环0已经存在于固件方法输出，不能归咎于SMBus导出丢掉非零计数。
+真实睡眠/唤醒和长期稳定性仍需验收。
+
+只读检查Windows盘的Dell组件后，已找到A3CallerBattery的独立软件SMI路径：
+AX=0x21A3、BH=0x17、BL为电池位置，成功时AX为循环值，0xFFFF/0xFFFE为错误。
+38组历史日志配对返回21，最新记录在2026年10月。尚未在当前macOS上执行此请求，
+不能把历史21写死或宣称当前物理电池就是21次；必须先核实当前固件传输、并发、
+位置匹配及失败语义。此轮没有发起SMI/MMIO/EC请求。
+
+本地修订版`1.3.8-a51m4`保留a51m3的电池结构识别和假测量项省略策略。
+只在已有`-a51mbatobserve`开启时，复制驱动本来已读取的`_BIX`前16个数值
+或`_BIF`前9个数值，记录方法类型与包长度；不新增ACPI/EC/SMBus事务，
+不记录型号、序列号或OEM字符串，不修改电流、容量、单位或循环次数。
+控制器在现有发布路径复制状态后解锁，再发布固定72字节
+`A51mBatteryStaticInfo`和schema=1；不是额外常驻服务。
+
+重启后用`python3 Tools/dump_a51m_battery_static.py`读取。零次计数仍需独立
+来源验证，不能把观察属性当成真实计数修复。旧DSDT的固定0和倍率问题尚未
+确认适用于当前BIOS，不在本次变更中猜测性修改。
+
+`python3 Tests/A51mBattery/static-info.py`执行实际捕获代码的16组夹具，覆盖
+观察关闭/开启、BIF/BIX和截断包；另验解码器的零/非零/未知值及畸形输入。
+原有时间/电流/SMC注册及原生启动分支回归仍须通过。真实启动验收另行记录。
+
 基线：官方VirtualSMC 1.3.8，提交`b15991dd87e36a102bf159ea56490e3126245590`。
-范围：仅SMCBatteryManager电池插件；三个独立功能默认关闭，其他VirtualSMC插件不需要替换。
+范围：本节只修改SMCBatteryManager电池插件，各功能默认关闭。另一个已验证的SMCDellSensors计数竞态及其独立部署见[SMCDellActivity.md](SMCDellActivity.md)；两项不混作同一根因。
 
 ## 已定位与未定位
 
@@ -35,6 +196,7 @@ Windows安装记录将本机ACPI\PNP0C0A\0绑定到微软CmBatt_Inst（10.0.2610
 | `-a51mbattime` | 开启A51m时间策略，不更改电流、容量、百分比或充放电标志 |
 | `-a51mbatobserve` | 只读观察原本已发生的读取和导出，不开启时间修复 |
 | `-a51mbatmeta` | a51m3保留独立的虚拟电池结构描述，不注册无真实数据来源的ACID与BC1V测量项；a51m2此选项有启动回归，禁止使用 |
+| `-a51mbatdell` | a51m5只读Dell元数据扩展；默认关闭，须核对接口签名与有效字段，真实数据验收尚待下一次启动 |
 | 前两者同时 | 时间修复和观察同时开启，记录修复前后的时间 |
 | 三者同时 | 在时间修复与观察之外，省略两项无真实来源的SMC元数据 |
 
@@ -194,6 +356,83 @@ Rollback: restore the previous KEXT and matching private config together, or
 remove only `-a51mbatmeta` before the next authorized boot to retain the old
 compatibility metadata. Keep all personal identity and backup files private.
 
+## a51m5 candidate: staged for the next authorized boot, not live-accepted
+
+The opt-in `-a51mbatdell` adds a read-only LegacyDiags client to the existing
+battery polling path. No new process, service, charge controller or SMI-port
+writer is installed. It requires the native `DIAG` device to advertise the
+F1DDEE52-063C-4784-A11E-8A06684B9B01 WMI method GUID and `DM` method identifier,
+then validates the Dell diagnostic signature before an allowlisted query.
+`WMDM` owns its firmware buffers and method serialization. This does not assert
+serialization against other drivers that make independent SMM calls.
+
+The Windows implementation and historical local captures establish this wire
+protocol; they are not evidence that a new macOS call has already succeeded.
+The previous 21-cycle and 330 W samples are historical, never constants or
+substitutes for a failed current read. Thirty older Windows DDV snapshots also
+contain adapter fields of330 W and480 W at different times. They do not
+establish current attachment or how the dual-input platform aggregates power;
+never hardcode330 or sum two bricks without current evidence. Current `_BIX` returns zero cycles.
+
+Valid cycle count, temperature, manufacture date and battery identity can
+replace the incomplete ACPI metadata. Pack current, pack voltage, capacity
+units and charge thresholds remain on the existing `_BST`/`_BIX` path. Raw
+manufacturer/status words are retained with provenance, not translated into
+an invented Apple health diagnosis. Per-cell voltage is still unavailable.
+
+The first batch performs 29 allowlisted reads. Normal minute updates perform
+only signature/cycle/temperature reads. Wake or an actual ACPI AC-presence
+transition also refreshes seven adapter fields, without repeating all battery
+identity queries. A returned call taking more than 20 ms stops further calls
+until reboot; this cannot interrupt firmware or guarantee a 20 ms worst case.
+Failed fields are invalid, not zero measurements. Endpoint/signature failures
+leave the original battery driver in place. This fail-closed behavior has only
+been verified with owned endpoint fixtures so far.
+
+`A51mDellTelemetry` schema 2 is a fixed 1520-byte cached record. The private
+`Tools/dump_a51m_dell.py` decoder never initiates hardware access; it redacts
+serial numbers, vendor data and ePPID unless explicitly requested locally.
+It labels separate battery/static/adapter timestamps and does not interpret
+unknown V/I scaling as engineering units.
+
+Adapter `AX=0x24A3`, `BH=6` returns the static design rating in watts; `BH=3`
+returns the available design rating, not instantaneous wall consumption.
+`BH=6` result BX bit 0 is AC present and bit 1 is valid supply identification.
+Voltage/current/ID/date/serial are separately cached. Their raw voltage/current
+units still need current-machine validation. Do not synthesize 19.5 V or a
+current from 330 W, truncate watts into the legacy 8-bit `ACID` field, or sum
+two supplies without per-supply evidence.
+
+The installed Apple driver has a modern `AC-N` / `D0VR` / `D0IR` path that
+calculates a 32-bit wattage from rated mV and mA. Its exact arithmetic passed
+owned 330 W and 370 W instruction tests. Modern SMC adapter-key publication
+is deliberately not enabled until the Dell field units and connection
+lifecycle are verified. Therefore iStat adapter-watt visibility is not yet an
+accepted result. Existing fake 60 W and fake 16 V keys remain suppressed.
+
+Validation includes actual reader/mapping/decoder code, missing and malformed
+responses, error/echo rejection, ownership, slow-call cutoff, notification
+invalidation, and 72 archived native AML buffer-conversion roundtrips with
+firmware replaced by an owned stub. ACPICA 20260408 reports four fixed debug
+teardown cache objects after these repeated evaluations; the test does not
+hide that diagnostic or treat it as a live-kernel leak measurement. The old
+DSDT's converter is a protocol reference, not proof of current firmware.
+
+Build success and offline tests do not establish live firmware, UI, wake or
+battery-hotplug acceptance. Before deployment, preserve a51m4 plus its private
+config and recovery path. No live a51m5 transport has run as of this note.
+
+Staged receipt: `battery-dell-deploy-20261115T084125Z` in the private evidence
+directory. Only the battery executable and the appended `-a51mbatdell` option
+changed. Current running revision remains a51m4; the staged executable UUID is
+37715531-726D-39EB-8568-89ABD92C6F51. Full EFI copies on the system volume and
+NV2T plus on-EFI copies of the prior config and a51m4 executable were hashed.
+The existing UEFI Shell recovery script restores those two files and preserves
+the accepted ACPI wake-table repair. File copies were rehearsed privately;
+the firmware script was not run on the live machine. No reboot or hot load
+was performed. The historical 330 W observation is still not a current Mac
+measurement; iStat watt display and all new fields await actual boot readings.
+
 ## 参考
 
 - [Smart Battery Data Specification 1.1，§5.1.18–20](https://sbs-forum.org/specs/sbdat110.pdf)
@@ -203,3 +442,34 @@ compatibility metadata. Keep all personal identity and backup files private.
 - [上游1.3.8基线](https://github.com/acidanthera/VirtualSMC/tree/1.3.8)
 
 公开仓库仅保存实现、可复现实验和结论；原始机器日志、序列号、Windows系统文件与本地证据包不提交。
+
+
+## Combined sensor preflight, 2026-11-15
+
+The adapter bridge is isolated in A51mAdapterPublication.hpp for tests of the
+actual production code, rather than a parallel policy model. It writes a
+32-bit AdapterDetails.Watts only for a current, PSID-valid static design rating
+on this plugin's AppleSmartBattery provider chain. The existing native gated
+completion runs first, and the existing poll publishes state at its original
+boundary. The original native Watts always wins. No charger voltage/current
+or instantaneous AC input power is inferred. This boot currently returns
+static 330 W and dynamic available-design 480 W; neither is a wall wattmeter
+nor proof of separately identified adapters. The local native bridge cannot be
+called accepted before a real boot, unplug/replug and application check.
+
+The read/export/time policy, Dell ACPI reader and native adapter arithmetic
+regressions passed again alongside the new publication tests. Only the battery
+plugin will be replaced; the independently accepted Dell activity fix remains
+unchanged. All changes are local and uncommitted for review.
+
+
+## Post-boot correction: dual-adapter interpretation is still open
+
+The a51m6 executable UUID is now verified loaded. Its native bridge reaches
+iStat, but publishing 330 W is NOT an accepted report of the owner's attached
+2 x 240 W adapters. The current static selector 6 returns 330 W, while dynamic
+selector 3 returns 480 W; both BX flags are 3. The owner reports the original
+combination as 330+180 W. Do not equate the static field with a physically
+identified attached brick or the total. Dynamic 480 W matches the stated
+nameplate sum, but individual-port behavior/firmware thresholds still require
+verification before switching the export. This turn changed no EFI or limits.

@@ -9,6 +9,9 @@
 #define BatteryManagerState_hpp
 
 #include "A51mBatteryTelemetry.hpp"
+#include "A51mBatteryStaticInfo.hpp"
+#include "A51mDellTelemetry.hpp"
+#include "A51mDualAdapterTelemetry.hpp"
 
 /**
  *  Aggregated battery information
@@ -91,6 +94,9 @@ struct BatteryInfo {
 	State state {};
 	// Copied under the same lock as state; sequence zero means no observed _BST yet.
 	A51mBattery::Snapshot a51mSnapshot {};
+	A51mBattery::StaticInfo a51mStaticInfo {};
+	A51mDell::Telemetry a51mDellInfo {};
+	A51mDualAdapter::Telemetry a51mDualAdapterInfo {};
 	uint16_t manufactureDate {0};
 	uint32_t designCapacity {0};
 	uint32_t technology {0};
