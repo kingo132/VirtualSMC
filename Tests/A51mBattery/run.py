@@ -142,6 +142,15 @@ int main(){
 '''.replace('MEMBERS',members).replace('FUNCTIONS',functions)
 
 
+def metadata_registration_source():
+    cpp=(SENSORS/'SMCBatteryManager.cpp').read_text()
+    a=cpp.index('\tconst bool omitSyntheticMetadata')
+    b=cpp.index('\tconst auto batCount',a)
+    registration=cpp[a:b]+function(cpp,'if (getKernelVersion() >= KernelVersion::BigSur && !omitSyntheticMetadata)')
+    template=(pathlib.Path(__file__).parent/'metadata-registration.cpp').read_text()
+    return template.replace('/* ACTUAL_REGISTRATION */',registration)
+
+
 def main():
     spec=importlib.util.spec_from_file_location('dump',ROOT/'Tools/dump_a51m_battery.py')
     decoder=importlib.util.module_from_spec(spec);spec.loader.exec_module(decoder)
@@ -149,7 +158,8 @@ def main():
         d=pathlib.Path(d);binary=d/'trace.bin'
         outputs=[build_run(d,'policy',(pathlib.Path(__file__).parent/'policy.cpp').read_text(),binary),
                  build_run(d,'integration',integration_source()),
-                 build_run(d,'observer',observer_source())]
+                 build_run(d,'observer',observer_source()),
+                 build_run(d,'metadata',metadata_registration_source())]
         raw=binary.read_bytes();trace=decoder.decode(raw)
         assert trace['total']==70 and trace['overwritten']==6 and len(trace['events'])==64
         assert all(not x['reply_changed'] for x in trace['events'])

@@ -1,9 +1,17 @@
 VirtualSMC Changelog
 ====================
+#### A51m revision 1.3.8-a51m2
+- Add independent `-a51mbatmeta` opt-in to omit the synthetic ACID adapter descriptor and BC1V-family SMC cell-voltage keys
+- Preserve AC-presence detection, real current/voltage/capacity, time policy and observation behavior; do not substitute zero or 65535 for missing metadata
+- Publish one shared revision marker on the battery plugin and virtual SMBus controller
+- Add 54 actual key-registration fixture cases covering opt-in, OS generation, adapter count and battery count
+- Release build and host regressions are verified; post-reboot field omission and UI acceptance remain pending
+- This SMC-path change does not alter legacy raw SMBus cell placeholders, establish real cycle counts or fix every unsupported metadata field
+
 #### A51m battery branch (based on v1.3.8)
 - Added optional `-a51mbattime` time-state/unknown-value handling without changing currents or capacity
 - Added independent `-a51mbatobserve` bounded source/reply tracing with a read-only decoder
-- These changes are source-tested and build-tested; real loading and electrical accuracy remain unverified
+- Revision a51m1 was subsequently loaded and its enabled time policy/observer and coherent discharge reports were verified; independent electrical accuracy and the old 31 A excursion remain unverified
 
 #### v1.3.8
 - Reduced unneeded power source notifications to remove repeated "PMRD: clamshell closed 0, disabled 0/0, desktopMode 0, ac 0" messages in kernel log

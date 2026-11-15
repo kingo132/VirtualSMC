@@ -15,6 +15,7 @@
 #include <IOKit/IOTimerEventSource.h>
 
 #include "SMCSMBusController.hpp"
+#include "A51mBatteryRevision.hpp"
 
 extern _Atomic(bool) smc_battery_manager_started;
 
@@ -79,7 +80,7 @@ bool SMCSMBusController::start(IOService *provider) {
 	}
 
 	setProperty("IOSMBusSmartBatteryManager", kOSBooleanTrue);
-	setProperty("A51mBatteryRevision", "1.3.8-a51m1");
+	setProperty("A51mBatteryRevision", A51mBattery::Revision);
 	setProperty("A51mBatteryTimePolicyEnabled", BatteryManager::getShared()->a51mTimePolicyEnabled);
 	if (BatteryManager::getShared()->a51mObserveEnabled)
 		a51mObserver = new A51mObserver;

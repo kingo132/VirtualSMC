@@ -10,6 +10,7 @@
 
 #include "SMCBatteryManager.hpp"
 #include "KeyImplementations.hpp"
+#include "A51mBatteryRevision.hpp"
 #include <IOKit/battery/AppleSmartBatteryCommands.h>
 #include <Headers/kern_version.hpp>
 
@@ -44,6 +45,7 @@ bool SMCBatteryManager::start(IOService *provider) {
 	}
 
 	setProperty("VersionInfo", kextVersion);
+	setProperty("A51mBatteryRevision", A51mBattery::Revision);
 
 	// AppleSMC presence is a requirement, wait for it.
 	auto dict = IOService::nameMatching("AppleSMC");
@@ -81,11 +83,18 @@ bool SMCBatteryManager::start(IOService *provider) {
 	//FIXME: This needs to be implemented along with AC-W!
 	// VirtualSMCAPI::addKey(KeyAC_N, vsmcPlugin.data, VirtualSMCAPI::valueWithUint8(0, new AC_N(batteryManager)));
 
+	// Explicit opt-in: never advertise synthetic SMC metadata as a measurement.
+	// AC presence/current/capacity and the existing time policy are independent.
+	const bool omitSyntheticMetadata = checkKernelArgument("-a51mbatmeta");
+	setProperty("A51mBatterySyntheticSMCMetadataOmitted", omitSyntheticMetadata);
+
 	const auto adaptCount = BatteryManager::getShared()->adapterCount;
 	if (adaptCount > 0) {
 		VirtualSMCAPI::addKey(KeyACEN, vsmcPlugin.data, VirtualSMCAPI::valueWithUint8(0, new ACIN));
 		VirtualSMCAPI::addKey(KeyACFP, vsmcPlugin.data, VirtualSMCAPI::valueWithFlag(false, new ACIN));
-		VirtualSMCAPI::addKey(KeyACID, vsmcPlugin.data, VirtualSMCAPI::valueWithData(nullptr, 8, SmcKeyTypeCh8s, new ACID));
+		if (!omitSyntheticMetadata) {
+			VirtualSMCAPI::addKey(KeyACID, vsmcPlugin.data, VirtualSMCAPI::valueWithData(nullptr, 8, SmcKeyTypeCh8s, new ACID));
+		}
 		VirtualSMCAPI::addKey(KeyACIN, vsmcPlugin.data, VirtualSMCAPI::valueWithFlag(false, new ACIN));
 	}
 
@@ -119,7 +128,7 @@ bool SMCBatteryManager::start(IOService *provider) {
 	VirtualSMCAPI::addKey(KeyCHBV, vsmcPlugin.data, VirtualSMCAPI::valueWithUint16(8000, new CHBV));
 	VirtualSMCAPI::addKey(KeyCHLC, vsmcPlugin.data, VirtualSMCAPI::valueWithUint8(1, new CHLC));
 
-	if (getKernelVersion() >= KernelVersion::BigSur) {
+	if (getKernelVersion() >= KernelVersion::BigSur && !omitSyntheticMetadata) {
 		for (size_t i = 0; i < batCount; i++) {
 			VirtualSMCAPI::addKey(KeyBC1V(i+1), vsmcPlugin.data, VirtualSMCAPI::valueWithUint16(defaultBatteryCellVoltage));
 #if 0

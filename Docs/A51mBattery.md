@@ -1,7 +1,7 @@
 # A51mR2电池时间修复与只读观察
 
 基线：官方VirtualSMC 1.3.8，提交`b15991dd87e36a102bf159ea56490e3126245590`。
-范围：仅SMCBatteryManager电池插件；两项功能默认关闭，其他VirtualSMC插件不需要替换。
+范围：仅SMCBatteryManager电池插件；三个独立功能默认关闭，其他VirtualSMC插件不需要替换。
 
 ## 已定位与未定位
 
@@ -27,14 +27,16 @@ Windows安装记录将本机ACPI\PNP0C0A\0绑定到微软CmBatt_Inst（10.0.2610
 这些证据支持修改KEXT的换算/导出逻辑；目前没有理由为这项时间问题修改SSDT。
 循环次数和温度若要补齐，仍需当前固件方法和真实数据来源，不能移植旧SSDT或伪造值。
 
-## 两个独立开关
+## 独立开关
 
 | 启动参数 | 行为 |
 | --- | --- |
 | 无参数 | 原上游时间、电流、供电控制行为；仅增加分支版本/开关元数据 |
 | `-a51mbattime` | 开启A51m时间策略，不更改电流、容量、百分比或充放电标志 |
 | `-a51mbatobserve` | 只读观察原本已发生的读取和导出，不开启时间修复 |
-| 两者同时 | 时间修复和观察同时开启，记录修复前后的时间 |
+| `-a51mbatmeta` | 不注册无真实数据来源的ACID适配器描述与BC1V系列单节电压SMC键；不改变接电检测 |
+| 前两者同时 | 时间修复和观察同时开启，记录修复前后的时间 |
+| 三者同时 | 在时间修复与观察之外，省略两项无真实来源的SMC元数据 |
 
 使用显式开关是因为黑苹果SMBIOS会伪装成苹果机型，不根据伪装的型号自动启用。
 时间策略实现于A51mBatteryPolicy.hpp，在上游状态/临界电量判断之后应用：
@@ -75,10 +77,13 @@ IORegistry发布复用原有100ms定时器，在批量请求完成后进行；�
 
 控制器SMCSMBusController提供：
 
-- `A51mBatteryRevision`：`1.3.8-a51m1`。
+- `A51mBatteryRevision`：`1.3.8-a51m2`；此前部署版为`1.3.8-a51m1`。
 - `A51mBatteryTimePolicyEnabled`：时间开关。
 - `A51mBatteryObserveActive`：观察存储是否成功启用。
 - `A51mBatteryTrace`：可选、固定大小OSData。
+
+电池插件SMCBatteryManager还提供相同的`A51mBatteryRevision`，以及
+`A51mBatterySyntheticSMCMetadataOmitted`布尔值，用于确认第三个开关。
 
 ```
 python3 Tools/dump_a51m_battery.py
@@ -116,6 +121,8 @@ xcodebuild -project VirtualSMC.xcodeproj -target SMCBatteryManager \
 以及从真实更新代码提取的四种开关组合和电流保持行为。观察测试直接执行本分支的实际方法，
 注入排队后的命令/值改变，检查请求复用、饱和与无硬件修改。解码测试覆盖符号数、环形顺序、
 缓冲区改变与畸形输入。这些测试使用假状态/假请求，没有执行内核代码。
+另有54组测试直接提取实际SMC键注册代码，覆盖第三个开关、系统代际、适配器与电池数量，
+核对ACEN/ACFP/ACIN接电检测保留、ACID和BC1V只在显式开关开启时省略。
 
 默认使用UndefinedBehaviorSanitizer。可在支持的环境设置
 `A51M_TEST_SANITIZERS=address,undefined`运行ASan；本机Xcode所带ASan运行时在main之前因
@@ -124,10 +131,41 @@ libpthread初始化失败，不能宣称该模式已通过。本机UBSan测试�
 
 ## 部署状态
 
-本次授权只修改、测试并提交fork源代码；**未替换EFI、未启用启动参数、未加载新组件**。
-运行环境仍是官方SMCBatteryManager 1.3.8。下次部署需单独审核和备份，启动验收应同时核对
-UUID、A51mBatteryRevision、两个开关状态与原有电池行为。
-本修复不承诺修复历史突然断电、容量校准、循环次数、温度或桌面卡顿。
+此前a51m1已获授权部署并重启：时间修复和观察开关生效，满电无效时间已返回未知，
+放电源数据、虚拟SMBus回复和系统读数在采样中吻合，31A异常未复现。
+a51m2的两项SMC元数据省略已获授权进入备份部署流程；**启动后的字段省略与界面验收仍待完成**。
+不热卸载电池驱动、不自动重启。下一次获准启动后核对加载UUID、a51m2版本标记、
+三个独立开关以及接电检测、电流、电压、容量和时间行为。
+用户确认此前关机是手动操作，不列为电池故障。本修复不承诺容量校准、真实循环次数、
+温度、31A异常或桌面卡顿已解决。
+
+## a51m2: omit synthetic SMC metadata
+
+The independent `-a51mbatmeta` opt-in stops registering two kinds of synthetic
+metadata that have no measurement source in this implementation:
+
+- `ACID`: the fixed adapter descriptor that presents 60 W as adapter power.
+- `BC1V`-family cell keys: fixed 16000 mV values, not measured cell voltages.
+
+The real AC-presence keys `ACEN`, `ACFP` and `ACIN` stay registered. Real current,
+pack voltage, capacity, battery status, the time policy and observer are not
+changed. Do not substitute zero or 65535 and call that a sensor reading.
+
+The installed Apple consumer has an explicit missing-key decision path. Its
+SMC dictionary builder marks an unavailable key as NOOP and skips it. Owned
+instruction tests exercised that decision for all 256 byte status inputs;
+this verifies the decision branch, not a full live SMC/UI lifecycle.
+
+Scope is deliberately limited to this SMC export path. The legacy raw SMBus
+cell-command fallback is unchanged. Cycle count, temperature, requested charge
+voltage, design cycle limits and manufacturer failure status are not made
+trustworthy by this option. Whether iStat omits the unavailable fields, rather
+than inventing a fallback, requires post-boot acceptance. If it does not, the
+change must not be reported as a completed display fix.
+
+Rollback: restore the previous KEXT and matching private config together, or
+remove only `-a51mbatmeta` before the next authorized boot to retain the old
+compatibility metadata. Keep all personal identity and backup files private.
 
 ## 参考
 
